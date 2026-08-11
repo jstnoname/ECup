@@ -16,5 +16,12 @@ dev = [
     "ipykernel",
 ]
 
-[tool.ecup]
+[tool.ecup.data]
 data_repo = "well-please/ecup-data"
+items = "items.parquet"
+items_human = "items_human.parquet"
+matches = "matches.parquet"
+matches_llm = "matches_llm.parquet"
+
+[tool.ecup.model]
+# параметры обучения появятся перед 02_train (model_name, epochs, lr, веса...)

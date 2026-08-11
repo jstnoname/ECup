@@ -16,7 +16,8 @@ ECup 2026 — контейнерное соревнование по матчи�
 ```
 ECup/
 ├── pyproject.toml      # 1) зависимости (core/train/dev) — единый источник, нет requirements.txt
-│                       # 2) [tool.ecup] — конфиг обучения (model_name, epochs, lr, веса, batch_size...)
+│                       # 2) [tool.ecup.data]/[tool.ecup.model] — конфиг (пути данных; параметры
+│                       #    обучения model_name, epochs, lr, веса... появятся перед 02_train)
 ├── uv.lock             # lock только для локальной установки (uv); платформы ставят pip из pyproject
 ├── .env                # секреты (Dagshub MLflow URI+креды, HF_TOKEN) — gitignored, только train-путь
 ├── .dockerignore       # страховка: .env/.venv/.git/данные/ноутбуки не попадают в образ
@@ -24,7 +25,7 @@ ECup/
 ├── run.py              # entry point соревнования: CLI-инференс (--items_path/-i, --matches_path/-m,
 │                       #   --output-path/-o → submit.csv). Тонкий: без MLflow, без чтения .env
 ├── utility/             # общий пакет (локально: editable через uv; платформы: %pip install -e .)
-│   ├── config.py        # load_config ([tool.ecup] через tomllib), set_secrets (подгрузка секретов
+│   ├── config.py        # load_config ([tool.ecup.*] через tomllib), set_secrets (подгрузка секретов
 │   │                    #   в os.environ: kaggle_secrets/userdata/.env), data_dir (пути данных)
 │   └── __init__.py      # Env (dataclass) + utility.load() — единая инициализация: секреты+конфиг+данные
 ├── train/
@@ -39,9 +40,9 @@ ECup/
 
 - `pyproject.toml` — **единственный источник зависимостей и конфига обучения**:
   - группы: `core` (pandas<3, polars, python-dotenv, mlflow==3.5.1 — то, что реально нужно контейнеру), `dev` (jupyterlab, matplotlib, ipykernel). НЕТ requirements.txt. `train`-группа (torch, transformers, sentence-transformers...) добавится перед обучением.
-  - `[tool.ecup]` — конфиг (data_repo и далее параметры обучения: model_name, epochs, lr, human_weight, llm_weight, batch_size, max_len, seed...). Читается ноутбуком через `tomllib`, при желании переопределяется словарём в ячейке, целиком логируется в MLflow.
+  - `[tool.ecup.data]` — пути данных (data_repo и имена файлов); `[tool.ecup.model]` — параметры обучения (model_name, epochs, lr, human_weight, llm_weight, batch_size, max_len, seed...; сейчас пустой, типизация — при 02_train). Читается ноутбуком через `tomllib`, при желании переопределяется словарём в ячейке, целиком логируется в MLflow.
   - `requires-python = ">=3.11"` (на Kaggle Python 3.11 — ужесточать нельзя).
-- `utility/` — общий пакет: `config.py` (`load_config` — `[tool.ecup]` через tomllib, `set_secrets` — подгрузка `SECRET_KEYS` в os.environ из kaggle_secrets/userdata/.env, `data_dir`), `__init__.py` (`utility.load()` — единая инициализация: секреты + конфиг + каталог данных → `Env`). Данные читаются НЕ из пакета, а явно в ноутбуках (см. Data).
+- `utility/` — общий пакет: `config.py` (`load_config` — `[tool.ecup.*]` через tomllib, `set_secrets` — подгрузка `SECRET_KEYS` в os.environ из kaggle_secrets/userdata/.env, `data_dir`), `__init__.py` (`Data`/`Model`/`Config`/`Env` dataclass + `utility.load()` — единая инициализация: секреты + конфиг + каталог данных). Данные читаются НЕ из пакета, а явно в ноутбуках (см. Data).
 - `train/train_ce.py` — `fit_cross_encoder(cfg) -> mlflow run_id`; вся логика обучения в файлах, ноутбук = оркестрация.
 - `run.py` — entry point соревнования: `--items_path/-i`, `--matches_path/-m`, `--output-path/-o` → `submit.csv` с колонками `id1,id2,predict` (сырые скоры, ВСЕ пары без исключения). Тонкий и чистый: без обучения, без MLflow, **без чтения `.env`**.
 - `notebooks/01_eda.ipynb` (локально), `notebooks/02_train.ipynb` (Kaggle/Colab), `scripts/emulate.py` (удалённая эмуляция run.py на items_human + срез пар: валидация формата + замер времени), `metadata.json` (`{"image": "jstnoname/ecup-solution:V", "entry_point": "python -u run.py"}`).
@@ -51,7 +52,7 @@ ECup/
 - Источник: приватный датасет **`well-please/ecup-data`** (repo_type=dataset, private) в HF-организации `well-please`. Файлы: `items.parquet`, `items_human.parquet`, `matches.parquet`, `matches_llm.parquet` — сырые parquet, без конверсии в Arrow/HF-формат.
 - Доступ: членство в org `well-please`. Токены **личные у каждого участника**: для скачивания достаточно read-скоупа, для (пере)заливки датасета — write.
 - Чтение данных — **явно в ноутбуках**, напрямую с HF нативным polars (`hf://`), без локальной копии и без `huggingface_hub`. Достаточно один раз вызвать `set_secrets()` (HF_TOKEN в os.environ), дальше:
-  `pl.read_parquet(f"hf://datasets/{cfg['data_repo']}/{file}.parquet")`.
+  `pl.read_parquet(f"hf://datasets/{env.config.data.data_repo}/{file}.parquet")`.
 - Загрузка данных запрещена правилами соревнования: датасет НЕ публиковать, файлы не коммитить в git, не включать в docker-образ/архив (в рантайме контейнеру данные приходят аргументами).
 
 ## Commands

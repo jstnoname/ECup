@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -6,8 +6,28 @@ from utility.config import data_dir, load_config, set_secrets
 
 
 @dataclass(frozen=True)
+class Data:
+    data_repo: str
+    items: str
+    items_human: str
+    matches: str
+    matches_llm: str
+
+
+@dataclass(frozen=True)
+class Model:
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Config:
+    data: Data
+    model: Model
+
+
+@dataclass(frozen=True)
 class Env:
-    config: dict[str, Any]
+    config: Config
     data_dir: Path
 
 
@@ -17,4 +37,11 @@ def load(path: str | Path | None = None) -> Env:
     :param path: path to config
     """
     set_secrets()
-    return Env(config=load_config(path), data_dir=data_dir())
+    cfg = load_config(path)
+    return Env(
+        config=Config(
+            data=Data(**cfg.get("data", {})),
+            model=Model(params=cfg.get("model", {}))
+        ),
+        data_dir=data_dir(),
+    )

@@ -39,7 +39,7 @@ ECup/
 ```
 
 - `pyproject.toml` — **единственный источник зависимостей и конфига обучения**:
-  - группы: `core` (polars, pyarrow, python-dotenv — то, что реально нужно контейнеру), `train` (torch, transformers, sentence-transformers, mlflow>=2, scikit-learn), `dev` (jupyterlab, matplotlib, ipykernel). НЕТ requirements.txt.
+  - группы: `core` (polars, pyarrow, python-dotenv — то, что реально нужно контейнеру), `train` (torch, transformers, sentence-transformers, mlflow==3.5.1, scikit-learn), `dev` (jupyterlab, matplotlib, ipykernel). НЕТ requirements.txt.
   - `[tool.ecup]` — конфиг обучения (model_name, epochs, lr, human_weight, llm_weight, batch_size, max_len, seed...). Читается ноутбуком через `tomllib`, при желании переопределяется словарём в ячейке, целиком логируется в MLflow.
   - `requires-python = ">=3.11"` (на Kaggle Python 3.11 — ужесточать нельзя).
 - `ecup/` — общий пакет: `text.py` (сборка текста пары name+attributes — **единый формат train=inference**, менять только здесь), `model.py` (обёртка CrossEncoder + pyfunc flavor: `predict(DataFrame[id1,id2,text1,text2]) -> scores` — контракт для mlflow docker), `config.py` (загрузка секретов — только train-путь), `data.py` (скачивание данных с HF — только dev/train-путь).
@@ -80,7 +80,8 @@ ECup/
 
 ## Gotchas
 
-- mlflow **1.x не работает** с protobuf>=5 и pandas 3 (ImportError `google.protobuf.service`) — только mlflow>=2.
+- mlflow **всех версий ≥2 требует `pandas<3`** (граф с `pandas>=3` неразрешим) — pandas в стеке держим `<3`, mlflow зафиксирован `==3.5.1` (совпадает с версией сервера Dagshub).
+- `.env` должен быть **без BOM**: Windows-редакторы могут сохранить файл с UTF-8 BOM, и dotenv прочитает первый ключ как `\ufeffKEY` — креды молча не загрузятся. Проверка: первые байты файла `EF BB BF`.
 - Время загрузки модели входит в лимит Check (1 мин) — веса грузить с локального файла, без HF-download в рантайме.
 - Docker-образ собирается на локальной машине (Docker Desktop), артефакт модели качается из Dagshub — не на Kaggle/Colab.
 - Число пар в выводе должно совпадать с числом пар на входе; `predict` — сырые скоры (не 0/1).

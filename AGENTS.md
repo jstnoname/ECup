@@ -23,11 +23,10 @@ ECup/
 ├── metadata.json       # контракт сабмита: {"image": "jstnoname/ecup-solution:V", "entry_point": "python -u run.py"}
 ├── run.py              # entry point соревнования: CLI-инференс (--items_path/-i, --matches_path/-m,
 │                       #   --output-path/-o → submit.csv). Тонкий: без MLflow, без чтения .env
-├── ecup/               # общий пакет (локально: editable через uv; платформы: %pip install -e .)
-│   ├── config.py       # загрузка секретов (.env / kaggle_secrets / userdata) — импортируется ТОЛЬКО train-кодом
-│   ├── data.py         # ensure_data(cfg, dest) — идемпотентное скачивание данных с HF (token из секретов)
-│   ├── text.py         # сборка текста пары name+attributes — ЕДИНЫЙ формат train=inference, менять только тут
-│   └── model.py        # CrossEncoder wrapper + pyfunc flavor: predict(DataFrame[id1,id2,text1,text2]) -> scores
+├── utility/             # общий пакет (локально: editable через uv; платформы: %pip install -e .)
+│   ├── config.py        # load_config ([tool.ecup] через tomllib), set_secrets (подгрузка секретов
+│   │                    #   в os.environ: kaggle_secrets/userdata/.env), data_dir (пути данных)
+│   └── __init__.py      # Env (dataclass) + utility.load() — единая инициализация: секреты+конфиг+данные
 ├── train/
 │   └── train_ce.py     # fit_cross_encoder(cfg) -> mlflow run_id — вся логика обучения, ноутбук = оркестрация
 ├── notebooks/
@@ -39,10 +38,10 @@ ECup/
 ```
 
 - `pyproject.toml` — **единственный источник зависимостей и конфига обучения**:
-  - группы: `core` (polars, pyarrow, python-dotenv — то, что реально нужно контейнеру), `train` (torch, transformers, sentence-transformers, mlflow==3.5.1, scikit-learn), `dev` (jupyterlab, matplotlib, ipykernel). НЕТ requirements.txt.
-  - `[tool.ecup]` — конфиг обучения (model_name, epochs, lr, human_weight, llm_weight, batch_size, max_len, seed...). Читается ноутбуком через `tomllib`, при желании переопределяется словарём в ячейке, целиком логируется в MLflow.
+  - группы: `core` (pandas<3, polars, python-dotenv, mlflow==3.5.1 — то, что реально нужно контейнеру), `dev` (jupyterlab, matplotlib, ipykernel). НЕТ requirements.txt. `train`-группа (torch, transformers, sentence-transformers...) добавится перед обучением.
+  - `[tool.ecup]` — конфиг (data_repo и далее параметры обучения: model_name, epochs, lr, human_weight, llm_weight, batch_size, max_len, seed...). Читается ноутбуком через `tomllib`, при желании переопределяется словарём в ячейке, целиком логируется в MLflow.
   - `requires-python = ">=3.11"` (на Kaggle Python 3.11 — ужесточать нельзя).
-- `ecup/` — общий пакет: `text.py` (сборка текста пары name+attributes — **единый формат train=inference**, менять только здесь), `model.py` (обёртка CrossEncoder + pyfunc flavor: `predict(DataFrame[id1,id2,text1,text2]) -> scores` — контракт для mlflow docker), `config.py` (загрузка секретов — только train-путь), `data.py` (скачивание данных с HF — только dev/train-путь).
+- `utility/` — общий пакет: `config.py` (`load_config` — `[tool.ecup]` через tomllib, `set_secrets` — подгрузка `SECRET_KEYS` в os.environ из kaggle_secrets/userdata/.env, `data_dir`), `__init__.py` (`utility.load()` — единая инициализация: секреты + конфиг + каталог данных → `Env`). Данные читаются НЕ из пакета, а явно в ноутбуках (см. Data).
 - `train/train_ce.py` — `fit_cross_encoder(cfg) -> mlflow run_id`; вся логика обучения в файлах, ноутбук = оркестрация.
 - `run.py` — entry point соревнования: `--items_path/-i`, `--matches_path/-m`, `--output-path/-o` → `submit.csv` с колонками `id1,id2,predict` (сырые скоры, ВСЕ пары без исключения). Тонкий и чистый: без обучения, без MLflow, **без чтения `.env`**.
 - `notebooks/01_eda.ipynb` (локально), `notebooks/02_train.ipynb` (Kaggle/Colab), `scripts/emulate.py` (удалённая эмуляция run.py на items_human + срез пар: валидация формата + замер времени), `metadata.json` (`{"image": "jstnoname/ecup-solution:V", "entry_point": "python -u run.py"}`).
@@ -51,7 +50,8 @@ ECup/
 
 - Источник: приватный датасет **`well-please/ecup-data`** (repo_type=dataset, private) в HF-организации `well-please`. Файлы: `items.parquet`, `items_human.parquet`, `matches.parquet`, `matches_llm.parquet` — сырые parquet, без конверсии в Arrow/HF-формат.
 - Доступ: членство в org `well-please`. Токены **личные у каждого участника**: для скачивания достаточно read-скоупа, для (пере)заливки датасета — write.
-- Скачивание в коде: `ecup/data.py` → `ensure_data(cfg, dest)` через `hf_hub_download` (token из секретов/`.env`), идемпотентно — пропускает уже скачанные файлы; данные кладём в `/kaggle/working/data` / `/content/data`.
+- Чтение данных — **явно в ноутбуках**, напрямую с HF нативным polars (`hf://`), без локальной копии и без `huggingface_hub`. Достаточно один раз вызвать `set_secrets()` (HF_TOKEN в os.environ), дальше:
+  `pl.read_parquet(f"hf://datasets/{cfg['data_repo']}/{file}.parquet")`.
 - Загрузка данных запрещена правилами соревнования: датасет НЕ публиковать, файлы не коммитить в git, не включать в docker-образ/архив (в рантайме контейнеру данные приходят аргументами).
 
 ## Commands
@@ -75,7 +75,7 @@ ECup/
 - `.env` (gitignored): `MLFLOW_TRACKING_URI` (Dagshub), `MLFLOW_TRACKING_USERNAME/PASSWORD`, `HF_TOKEN` — креды только для обучения. Никогда не коммитить, не печатать, не включать в образ/архив/логи.
 - `HF_TOKEN`: для скачивания данных хватает read-токена (на платформах — личный токен участника).
 - На платформах секреты не в ячейках: Kaggle → `kaggle_secrets`, Colab → `userdata`; локальный fallback — `.env`.
-- `run.py` и `ecup/model.py` не импортируют `ecup/config.py`-загрузку секретов и не падают без `.env` (все чтения через `os.environ.get` с дефолтами).
+- `run.py` и `utility/model.py` не импортируют `utility/config.py`-загрузку секретов и не падают без `.env` (все чтения через `os.environ.get` с дефолтами).
 - `.dockerignore` и сборка архива по белому списку (только `metadata.json`) — страховка от утечки.
 
 ## Gotchas

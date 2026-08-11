@@ -29,11 +29,9 @@ ECup/
 │                       #   --output-path/-o → submit.csv. Тонкий, без MLflow, без .env
 ├── metadata.json       # контракт сабмита: {"image": "jstnoname/ecup-solution:V",
 │                       #   "entry_point": "python -u run.py"}
-├── ecup/               # общий пакет (локально editable через uv, на платформах pip -e .)
-│   ├── config.py       # секреты (.env / kaggle_secrets / userdata) — только train-код
-│   ├── data.py         # ensure_data(cfg, dest) — идемпотентное скачивание данных с HF
-│   ├── text.py         # сборка текста пары name+attributes — единый формат train=inference
-│   └── model.py        # CrossEncoder + pyfunc flavor: predict(DataFrame[id1,id2,text1,text2])
+├── utility/             # общий пакет (локально editable через uv, на платформах pip -e .)
+│   ├── config.py        # load_config ([tool.ecup]), set_secrets (секреты в environ), data_dir
+│   └── __init__.py      # Env (dataclass) + utility.load() — секреты+конфиг+каталог данных
 ├── train/
 │   └── train_ce.py     # fit_cross_encoder(cfg) -> mlflow run_id (вся логика обучения)
 ├── notebooks/
@@ -48,7 +46,7 @@ ECup/
 ## Быстрый старт (локально)
 
 ```bash
-uv sync --extra train --extra dev   # установка (Windows → CPU-торч)
+uv sync --extra dev                   # установка (сейчас достаточно core+dev)
 uv run jupyter lab                  # EDA (ядро из .venv)
 ```
 
@@ -59,7 +57,7 @@ uv run jupyter lab                  # EDA (ядро из .venv)
 1. `%pip install -e .[train]` — установка из pyproject (на платформах нет uv, только pip).
 2. Конфиг читается из `[tool.ecup]` в `pyproject.toml` (`tomllib`), при желании переопределяется в ячейке; целиком логируется в MLflow.
 3. Секреты (MLflow/Dagshub, HF) — через секреты платформ (`kaggle_secrets` / `userdata`), не в ячейках.
-4. Данные — `ensure_data()` из приватного HF-датасета (личный токен).
+4. Данные — чтение напрямую с HF нативным polars (`hf://`): в первой ячейке `env = utility.load()` (секреты → environ, конфиг, каталог данных), дальше `pl.read_parquet(f"hf://datasets/{env.config['data_repo']}/{file}.parquet")`.
 5. Обучение → модель (pyfunc) логируется в MLflow (Dagshub) → артефакт используется для Docker-сборки.
 
 ## Сабмит

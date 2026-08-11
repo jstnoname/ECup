@@ -79,6 +79,13 @@ celerybeat-schedule
 # dotenv
 .env
 
+# local data cache
+data/
+
+# mlflow local stores (safety net; tracking goes to Dagshub)
+mlruns/
+mlartifacts/
+
 # virtualenv
 venv/
 ENV/

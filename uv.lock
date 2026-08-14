@@ -651,6 +651,7 @@ dev = [
     { name = "ipykernel" },
     { name = "jupyterlab" },
     { name = "matplotlib" },
+    { name = "scikit-learn" },
 ]
 
 [package.metadata]
@@ -662,6 +663,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3,<3" },
     { name = "polars", specifier = ">=1.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "scikit-learn", marker = "extra == 'dev'", specifier = ">=1.6" },
 ]
 provides-extras = ["dev"]
 

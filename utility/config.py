@@ -37,19 +37,19 @@ def set_secrets(names: list[str] | None = None) -> None:
     if names is None:
         names = SECRET_KEYS
 
-    def from_kaggle(name: str) -> str | None:
+    def from_kaggle(key: str) -> str | None:
         try:
             from kaggle_secrets import UserSecretsClient  # type: ignore
 
-            return UserSecretsClient().get_secret(name)
+            return UserSecretsClient().get_secret(key)
         except Exception:
             return None
 
-    def from_userdata(name: str) -> str | None:
+    def from_userdata(key: str) -> str | None:
         try:
             from google.colab import userdata  # type: ignore
 
-            return userdata.get(name)
+            return userdata.get(key)
         except Exception:
             return None
 

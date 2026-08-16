@@ -35,3 +35,8 @@ matches_llm = "matches_llm.parquet"
 
 [tool.ecup.model]
 # параметры обучения появятся перед 02_train (model_name, epochs, lr, веса...)
+
+[dependency-groups]
+dev = [
+    "pyrefly>=1.2.0",
+]

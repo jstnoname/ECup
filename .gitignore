@@ -191,3 +191,9 @@ fabric.properties
 .codex
 
 opencode.json
+
+models/*/model
+models/*/tokenizer
+**/temp
+**/tmp
+**.zip

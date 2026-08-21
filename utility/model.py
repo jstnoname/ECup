@@ -1,8 +1,12 @@
-from __future__ import annotations
-
 import json
+import os
+import shutil
+from pathlib import Path
 
+import mlflow
 import torch
+from dotenv import load_dotenv
+from transformers import AutoTokenizer
 
 
 def product_text(name, category, attributes, attr_cap: int = 1500) -> str:
@@ -39,3 +43,56 @@ class CrossEncoder(torch.nn.Module):
         for param in self.parameters():
             if param.requires_grad:
                 yield param
+
+
+def download_model_from_mlflow(run_id: str, save_path, artifact_path: str = "student_model") -> None:
+    """
+    Download a pickled CrossEncoder artifact from MLflow and repack it as a fp16
+    state_dict + encoder config into `<save_path>/model`.
+    Temp files go to `<save_path>/temp` and are removed afterwards.
+    """
+    load_dotenv()
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+
+    save_path = Path(save_path)
+    model_dir = save_path / "model"
+    temp_dir = save_path / "temp"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        local = mlflow.artifacts.download_artifacts(
+            run_id=run_id,
+            artifact_path=artifact_path,
+            dst_path=str(temp_dir),
+        )
+        print(f"downloaded: {local}")
+
+        model = torch.load(Path(local) / "data" / "model.pth", map_location="cpu", weights_only=False)
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"unpickled: {type(model).__name__}, {n_params / 1e6:.0f}M params")
+
+        state = {k: v.detach().cpu().half() for k, v in model.state_dict().items()}
+        out = model_dir / "student_state.pt"
+        torch.save(state, out)
+        print(f"state_dict: {out} ({out.stat().st_size / 1e6:.0f} MB), {len(state)} tensors")
+        model.encoder.config.save_pretrained(model_dir)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def download_tokenizer_from_hf(name: str, save_path) -> None:
+    """
+    Download a tokenizer from the HF Hub and save it flat into `<save_path>/tokenizer`.
+    Temp files go to `<save_path>/temp` and are removed afterwards.
+    """
+    save_path = Path(save_path)
+    tokenizer_dir = save_path / "tokenizer"
+    temp_dir = save_path / "temp"
+    tokenizer_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(name, cache_dir=str(temp_dir))
+        tokenizer.save_pretrained(tokenizer_dir)
+        print(f"tokenizer saved: {sorted(p.name for p in tokenizer_dir.iterdir())}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

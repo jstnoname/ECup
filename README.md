@@ -28,32 +28,43 @@
 - Атрибуты: 17 200 ключей, 12.6 в среднем на товар; набор ключей не фиксировать (топ смещён в ювелирку в items); «нет бренда» — спец-значение.
 - Human-разметка (365K пар) — для эмуляции пайплайна и валидации скоров, пулы не пересекаются с llm.
 
+## Результаты дистилляции (`notebooks/03_model_distillation.ipynb`)
+
+Прогон 2026-08-21 (Colab T4), MLflow experiment `ecup` (Dagshub):
+
+- **Student (`ai-forever/ruBert-base`, full fine-tune): macro PR-AUC 0.5117, global AP 0.5186** — на всех human-парах (365K). Baseline организаторов: 0.3635 / 0.4397 → **+14.8pp macro (+41% относительно)**.
+- Teacher (`ai-forever/sbert_large_mt_nlu_ru`, frozen encoder + head): **0.3378** на выборке human 20K — слабее baseline; его soft targets сжаты (mean 0.236, std 0.095, q01..q99 = 0.082..0.456), loss студента по teacher-компоненте стоит на плато. Дистилляция сработала как регуляризация — основной вклад дал full fine-tune студента на llm-таргетах.
+- Схема: учитель head-only, 2 эпохи на 80K llm-пар (сэмпл 100K, test_size 0.2), lr 1e-5, bs 16, max_len 256 → студент ruBert-base, loss = `ALPHA·BCE(teacher_soft) + (1−ALPHA)·LLM_WEIGHT·BCE(llm)` = 0.5 / 0.1.
+- Стабильность: обучение в чистом fp16 даёт NaN → fp32 master weights + `autocast(fp16)` + `GradScaler` + clip 10.0.
+- Артефакты: child-runs `teacher training` / `student distill` → `teacher_model/`, `student_model/` (MLmodel-формат, веса в `data/model.pth`, уже в fp16 после `.half()`).
+
 ## Архитектура
 
 ```
 ECup/
-├── pyproject.toml      # единственный источник зависимостей (группы core/train/dev)
-│                       # + [tool.ecup.data]/[tool.ecup.model] — конфиг (пути данных; параметры
-│                       #   обучения model_name, epochs, lr, веса... появятся перед 02_train)
+├── pyproject.toml      # единственный источник зависимостей + [tool.ecup.data]/[tool.ecup.model] — конфиг
 ├── uv.lock             # локальный lock (uv); на платформах — pip из pyproject
 ├── .env                # секреты (Dagshub MLflow, HF_TOKEN) — gitignored, только train-путь
-├── run.py              # entry point соревнования: --items_path/-i --matches_path/-m
-│                       #   --output-path/-o → submit.csv. Тонкий, без MLflow, без .env
-├── metadata.json       # контракт сабмита: {"image": "jstnoname/ecup-solution:V",
-│                       #   "entry_point": "python -u run.py"}
-├── utility/             # общий пакет (локально editable через uv, на платформах pip -e .)
-│   ├── config.py        # load_config ([tool.ecup.*]), set_secrets (секреты в environ), data_dir
-│   └── __init__.py      # Data/Model/Config/Env + utility.load() — секреты+конфиг+каталог данных
-├── train/
-│   └── train_ce.py     # fit_cross_encoder(cfg) -> mlflow run_id (вся логика обучения)
+├── data/               # gitignored: baseline организаторов (data/baseline/), локальные копии данных
+├── utility/            # общий пакет для ноутбуков (локально editable через uv, на платформах pip -e .)
+│   ├── config.py       # load_config ([tool.ecup.*]), set_secrets (секреты в environ), data_dir
+│   ├── model.py        # CrossEncoder (encoder + CLS + head), product_text(name, category, attributes)
+│   ├── eval.py         # macro_pr_auc
+│   └── __init__.py     # Data/Model/Config/Env + utility.load() — секреты+конфиг+каталог данных
 ├── notebooks/
-│   ├── 01_eda.ipynb    # EDA локально (JupyterLab, polars)
-│   └── 02_train.ipynb  # оркестрация обучения на Kaggle/Colab
-└── scripts/
-    └── emulate.py      # удалённая эмуляция run.py: формат вывода + замер времени
+│   ├── 01_eda.ipynb                # EDA локально (JupyterLab, polars)
+│   ├── 02_baseline_eval.ipynb      # оценка baseline организаторов на human-данных
+│   └── 03_model_distillation.ipynb # дистилляция teacher→student (Colab/Kaggle), артефакты → MLflow
+└── models/
+    └── baseline/       # Docker-решение для сабмита: самодостаточно, без utility/mlflow/.env
+        ├── run.py          # entry point инференса: --items_path --matches_path --output_path
+        ├── prepare_model.py    # скачивание student_model из MLflow → fp16 state_dict + токенизатор
+        ├── Dockerfile      # python:3.11-slim + torch cu128; веса/токенизатор COPY внутрь образа
+        ├── model/          # веса студента fp16 (gitignored, попадает в образ)
+        └── tokenizer/      # токенизатор sbert_large_mt_nlu_ru (gitignored, в образе)
 ```
 
-Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа из MLflow-артефакта (Dagshub).
+Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа из MLflow-артефакта (Dagshub). `metadata.json` (`{"image": ..., "entry_point": "python -u run.py"}`) создаётся в корне при сабмите.
 
 ## Быстрый старт (локально)
 
@@ -70,14 +81,15 @@ uv run jupyter lab                  # EDA (ядро из .venv)
 2. Конфиг читается из `[tool.ecup.data]` / `[tool.ecup.model]` в `pyproject.toml` (`tomllib`), при желании переопределяется в ячейке; целиком логируется в MLflow.
 3. Секреты (MLflow/Dagshub, HF) — через секреты платформ (`kaggle_secrets` / `userdata`), не в ячейках.
 4. Данные — чтение напрямую с HF нативным polars (`hf://`): в первой ячейке `env = utility.load()` (секреты → environ, конфиг, каталог данных), дальше `pl.read_parquet(f"hf://datasets/{env.config.data.data_repo}/{file}.parquet")`.
-5. Обучение → модель (pyfunc) логируется в MLflow (Dagshub) → артефакт используется для Docker-сборки.
+5. Обучение → модель логируется в MLflow (Dagshub) через `save_model` + `log_artifacts` (`log_model` на Dagshub падает 400 — см. AGENTS Gotchas) → артефакт используется для Docker-сборки.
 
 ## Сабмит
 
-1. `mlflow models build-docker -m runs:/<run_id>/model -n ecup-solution:<tag>` — образ с весами и зависимостями.
-2. `Dockerfile: FROM ecup-solution:<tag>` + `COPY run.py` + `ENTRYPOINT ["python","-u","run.py"]`.
-3. `docker push jstnoname/ecup-solution:<tag>`.
-4. Архив: `metadata.json` с указанием образа и entry point.
+1. `python models/baseline/prepare_model.py` — скачать `student_model` из MLflow (Dagshub, креды из `.env`), перепаковать в fp16 `state_dict` → `models/baseline/model/`, скачать токенизатор → `models/baseline/tokenizer/`.
+2. `docker build -t jstnoname/ecup-solution:v1 models/baseline` — образ ~8GB (torch cu128), лимит 15GB.
+3. Смоук формата локально: `docker run --rm -v <данные>:/data jstnoname/ecup-solution:v1 --items_path /data/items.parquet --matches_path /data/matches.parquet --output_path /data/submit.csv`; замер времени — только удалённо (Kaggle/Colab).
+4. `docker push jstnoname/ecup-solution:v1`.
+5. Архив: `metadata.json` = `{"image": "jstnoname/ecup-solution:v1", "entry_point": "python -u run.py"}`.
 
 ## Для агентов
 

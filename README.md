@@ -20,7 +20,7 @@
 
 ## Результаты EDA и baseline
 
-Полный анализ — `notebooks/eda.ipynb`, секция «10. Выводы анализа данных»; оценка baseline организаторов — `notebooks/02_baseline_eval.ipynb`. Ключевое:
+Полный анализ — `notebooks/01_eda.ipynb`, секция «10. Выводы анализа данных»; оценка baseline организаторов — `notebooks/02_baseline_eval.ipynb`. Ключевое:
 
 - **Простые признаки не работают**: exact_name 0.258, name_jaccard 0.302 (лучший), name_len_ratio 0.251, совпадения атрибутов ≈0.256 — все на уровне baseline 0.257 (Macro PR-AUC). Лексика и атрибуты не разделяют классы.
 - **Baseline организаторов** (MS-Marco-MiniLM-L12 CLS + LogReg, полный прогон на human-данных): **global AP 0.4397, macro PR-AUC 0.3635** — эталон для превзойти; слабые категории: ювелирка 0.112, обувь 0.135, одежда 0.182.
@@ -42,13 +42,13 @@
 
 ```
 ECup/
-├── pyproject.toml      # единственный источник зависимостей + [tool.ecup.data]/[tool.ecup.model] — конфиг
+├── pyproject.toml      # зависимости репо + [tool.ecup.data]/[tool.ecup.model] — конфиг (у образа свой requirements.txt)
 ├── uv.lock             # локальный lock (uv); на платформах — pip из pyproject
 ├── .env                # секреты (Dagshub MLflow, HF_TOKEN) — gitignored, только train-путь
 ├── data/               # gitignored: baseline организаторов (data/baseline/), локальные копии данных
 ├── utility/            # общий пакет для ноутбуков (локально editable через uv, на платформах pip -e .)
 │   ├── config.py       # load_config ([tool.ecup.*]), set_secrets (секреты в environ), data_dir
-│   ├── model.py        # CrossEncoder (encoder + CLS + head), product_text(name, category, attributes)
+│   ├── model.py        # CrossEncoder (encoder+CLS+head), product_text(attr_cap=1500), download_model_from_mlflow / download_tokenizer_from_hf
 │   ├── eval.py         # macro_pr_auc
 │   └── __init__.py     # Data/Model/Config/Env + utility.load() — секреты+конфиг+каталог данных
 ├── notebooks/
@@ -56,15 +56,17 @@ ECup/
 │   ├── 02_baseline_eval.ipynb      # оценка baseline организаторов на human-данных
 │   └── 03_model_distillation.ipynb # дистилляция teacher→student (Colab/Kaggle), артефакты → MLflow
 └── models/
-    └── baseline/       # Docker-решение для сабмита: самодостаточно, без utility/mlflow/.env
-        ├── run.py          # entry point инференса: --items_path --matches_path --output_path
-        ├── prepare_model.py    # скачивание student_model из MLflow → fp16 state_dict + токенизатор
-        ├── Dockerfile      # python:3.11-slim + torch cu128; веса/токенизатор COPY внутрь образа
-        ├── model/          # веса студента fp16 (gitignored, попадает в образ)
-        └── tokenizer/      # токенизатор sbert_large_mt_nlu_ru (gitignored, в образе)
+    └── baseline/       # сабмит-решение: образ = окружение, код+веса дублируются в архив
+        ├── run.py          # entry point инференса: --items_path --matches_path --output_path;
+        │                   #   cuda-only fp16, пути весов /baseline/*, lazy semi-join, bucketing по длине
+        ├── Dockerfile      # python:3.12.13-slim, БЕЗ ENTRYPOINT (команду подаёт проверочная система)
+        ├── requirements.txt # пины образа: torch==2.11.0+cu128 (--extra-index-url pytorch), transformers==5.15.0, polars==1.43.2
+        ├── metadata.json   # {"image": "...:vN", "entry_point": "python -u run.py"} — копия едет в архиве
+        ├── model/          # student_state.pt fp16 (~340MB) + config.json (в образе и в архиве)
+        └── tokenizer/      # токенизатор sbert_large_mt_nlu_ru (в образе и в архиве)
 ```
 
-Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа из MLflow-артефакта (Dagshub). `metadata.json` (`{"image": ..., "entry_point": "python -u run.py"}`) создаётся в корне при сабмите.
+Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа из MLflow-артефакта (Dagshub). `metadata.json` (`{"image": ..., "entry_point": "python -u run.py"}`) лежит в `models/baseline/` и пакуется в zip-архив сабмита вместе с `run.py` и весами.
 
 ## Быстрый старт (локально)
 
@@ -75,7 +77,7 @@ uv run jupyter lab                  # EDA (ядро из .venv)
 
 ## Обучение (Kaggle / Colab)
 
-Ноутбук `notebooks/02_train.ipynb` — оркестрация:
+Ноутбук `notebooks/03_model_distillation.ipynb` — оркестрация:
 
 1. `%pip install -e .[train]` — установка из pyproject (на платформах нет uv, только pip).
 2. Конфиг читается из `[tool.ecup.data]` / `[tool.ecup.model]` в `pyproject.toml` (`tomllib`), при желании переопределяется в ячейке; целиком логируется в MLflow.
@@ -85,11 +87,12 @@ uv run jupyter lab                  # EDA (ядро из .venv)
 
 ## Сабмит
 
-1. `python models/baseline/prepare_model.py` — скачать `student_model` из MLflow (Dagshub, креды из `.env`), перепаковать в fp16 `state_dict` → `models/baseline/model/`, скачать токенизатор → `models/baseline/tokenizer/`.
-2. `docker build -t jstnoname/ecup-solution:v1 models/baseline` — образ ~8GB (torch cu128), лимит 15GB.
-3. Смоук формата локально: `docker run --rm -v <данные>:/data jstnoname/ecup-solution:v1 --items_path /data/items.parquet --matches_path /data/matches.parquet --output_path /data/submit.csv`; замер времени — только удалённо (Kaggle/Colab).
-4. `docker push jstnoname/ecup-solution:v1`.
-5. Архив: `metadata.json` = `{"image": "jstnoname/ecup-solution:v1", "entry_point": "python -u run.py"}`.
+1. Скачать артефакты хелперами `utility.model` (локально, один раз, креды из `.env`): `download_model_from_mlflow(run_id, path)` → `models/baseline/model/`, `download_tokenizer_from_hf("ai-forever/sbert_large_mt_nlu_ru", path)` → `models/baseline/tokenizer/`.
+2. `docker build -t jstnoname/distill_model_solution:vN models/baseline` — torch ставится строго `+cu128`: драйверы стенда держат максимум CUDA 12.8, дефолтный PyPI-wheel падает с «NVIDIA driver too old».
+3. GPU-free проверка сборки: `docker run --rm jstnoname/distill_model_solution:vN python -c "import torch; print(torch.__version__, torch.version.cuda)"` → ожидание `2.11.0+cu128 12.8`.
+4. `docker push jstnoname/distill_model_solution:vN`. Теги версионные; уже запушенные не мутировать (у проверочной системы может закэшироваться digest).
+5. Архив `models/baseline/baseline.zip` (~330MB): `metadata.json` (с тегом vN) + `run.py` + `model/` + `tokenizer/`. Проверочная система распаковывает архив в свой воркспейс и запускает `entry_point` оттуда — поэтому код обязан ехать в архиве.
+6. Статус: **Check Success, Mean PR-AUC 0.3114** (2026-08-22, v6). Контрольный тест инференс-пути расхождений не показал; зазор к human-валидации 0.5117 — шум малой выборки Check (~50 пар/категорию) и/или сдвиг распределения теста, сравнивать с платформенным скором baseline организаторов.
 
 ## Для агентов
 

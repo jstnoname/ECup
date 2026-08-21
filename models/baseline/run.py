@@ -15,7 +15,7 @@ import polars as pl
 import torch
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path("/baseline").resolve()
 MODEL_DIR = BASE_DIR / "model"
 TOKENIZER_DIR = BASE_DIR / "tokenizer"
 
@@ -63,7 +63,7 @@ def build_pairs(items_path: str, matches_path: str) -> pl.DataFrame:
 
     needed = pl.DataFrame({"id": pl.concat([matches["id1"], matches["id2"]]).unique()})
     texts = items \
-        .join(needed, on="id", how="semi") \
+        .join(needed.lazy(), on="id", how="semi") \
         .unique(subset=["id"], keep="any") \
         .select(
             "id",
@@ -99,7 +99,7 @@ def load_model():
 def predict(model, tokenizer, text1: list[str], text2: list[str]) -> list[float]:
     n = len(text1)
     lengths = [len(a) + len(b) for a, b in zip(text1, text2)]
-    order = sorted(range(n), key=lengths.__getitem__)
+    order = sorted(range(n), key=lambda x: lengths[x])
     scores = [0.0] * n
     t0 = time.time()
     with torch.inference_mode():
@@ -127,14 +127,14 @@ def predict(model, tokenizer, text1: list[str], text2: list[str]) -> list[float]
 
 def main():
     time_start = time.time()
-    args = parse_args()
-    pairs = build_pairs(args.items_path, args.matches_path)
+    items_path, matches_path, output_path = parse_args()
+    pairs = build_pairs(items_path, matches_path)
     model = load_model()
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
     scores = predict(model, tokenizer, pairs["text1"].to_list(), pairs["text2"].to_list())
     out = pl.DataFrame({"id1": pairs["id1"], "id2": pairs["id2"], "predict": scores})
-    out.write_csv(args.output_path)
-    print(f"done: {out.height} rows -> {args.output_path}, total {time.time() - time_start:.1f}s")
+    out.write_csv(output_path)
+    print(f"done: {out.height} rows -> {output_path}, total {time.time() - time_start:.1f}s")
 
 
 if __name__ == "__main__":

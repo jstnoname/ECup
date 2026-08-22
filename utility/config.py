@@ -14,7 +14,7 @@ SECRET_KEYS = [
 ]
 
 
-def load_config(path: str | Path | None = None) -> dict[str, Any]:
+def _load_config(path: str | Path | None = None) -> dict[str, Any]:
     """
     Read [tool.ecup] from pyproject.toml.
     :param path: path to config file
@@ -29,7 +29,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
     raise FileNotFoundError("pyproject.toml with [tool.ecup] not found")
 
 
-def set_secrets(names: list[str] | None = None) -> None:
+def _set_secrets(names: list[str] | None = None) -> None:
     """
     load secrets to os.environ,
     :param names: environment names
@@ -65,7 +65,7 @@ def set_secrets(names: list[str] | None = None) -> None:
     load_dotenv()
 
 
-def data_dir() -> Path:
+def _data_dir() -> Path:
     """
     get data path: /kaggle/working/data → /content/data → local ./data.
     """

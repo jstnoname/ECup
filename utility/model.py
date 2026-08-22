@@ -6,7 +6,7 @@ from pathlib import Path
 import mlflow
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedModel, PreTrainedConfig, AutoModel
 
 
 def product_text(name, category, attributes, attr_cap: int = 1500) -> str:
@@ -35,8 +35,7 @@ class CrossEncoder(torch.nn.Module):
         self.clf = torch.nn.Linear(encoder.config.hidden_size, 1)
 
     def forward(self, **kwargs):
-        outputs = self.encoder(**kwargs)
-        cls = outputs.last_hidden_state[:, 0, :]
+        cls = self.encoder(**kwargs).last_hidden_state[:, 0, :]
         return self.clf(self.dropout(cls)).squeeze(-1)
 
     def get_active_params(self):
@@ -45,7 +44,22 @@ class CrossEncoder(torch.nn.Module):
                 yield param
 
 
-def download_model_from_mlflow(run_id: str, save_path, artifact_path: str = "student_model") -> None:
+class HFCrossEncoder(PreTrainedModel):
+    _supports_sdpa = True
+
+    def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
+        super().__init__(config, *inputs, **kwargs)
+
+        self.encoder = AutoModel.from_config(config)
+        self.dropout = torch.nn.Dropout(getattr(config, "dropout", 0.1))
+        self.clf = torch.nn.Linear(config.hidden_size, 1)
+
+    def forward(self, **kwargs):
+        cls = self.encoder(**kwargs).last_hidden_state[:, 0, :]
+        return self.clf(self.dropout(cls)).squeeze(-1)
+
+
+def download_model_from_mlflow(run_id: str, save_path: str | Path, artifact_path: str) -> None:
     """
     Download a pickled CrossEncoder artifact from MLflow and repack it as a fp16
     state_dict + encoder config into `<save_path>/model`.
@@ -80,7 +94,7 @@ def download_model_from_mlflow(run_id: str, save_path, artifact_path: str = "stu
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def download_tokenizer_from_hf(name: str, save_path) -> None:
+def download_tokenizer_from_hf(name: str, save_path: str | Path) -> None:
     """
     Download a tokenizer from the HF Hub and save it flat into `<save_path>/tokenizer`.
     Temp files go to `<save_path>/temp` and are removed afterwards.

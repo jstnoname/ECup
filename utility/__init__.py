@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from utility.config import data_dir, load_config, set_secrets
+from utility.config import _data_dir, _load_config, _set_secrets
 
 
 @dataclass(frozen=True)
@@ -36,12 +36,12 @@ def load(path: str | Path | None = None) -> Env:
     Initialize environment: secrets to os.environ, config, data dir.
     :param path: path to config
     """
-    set_secrets()
-    cfg = load_config(path)
+    _set_secrets()
+    cfg = _load_config(path)
     return Env(
         config=Config(
             data=Data(**cfg.get("data", {})),
             model=Model(params=cfg.get("model", {}))
         ),
-        data_dir=data_dir(),
+        data_dir=_data_dir(),
     )

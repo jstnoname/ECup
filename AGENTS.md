@@ -26,7 +26,7 @@ ECup/
 ├── utility/            # общий пакет для ноутбуков (локально editable через uv; платформы: %pip install -e .)
 │   ├── config.py       # load_config ([tool.ecup.*] через tomllib), set_secrets (kaggle_secrets/userdata/.env), data_dir
 │   ├── model.py        # CrossEncoder (encoder+[CLS]+head, freeze_encoder), product_text(attr_cap=1500)
-│   ├── eval.py         # macro_pr_auc(pos_min=2)
+│   ├── eval.py         # macro_pr_auc — строго как на платформе: AP по каждой категории из данных, без фильтра (0 позитивов → 0.0)
 │   └── __init__.py     # Env (dataclass) + utility.load() — единая инициализация: секреты+конфиг+данные
 ├── notebooks/
 │   ├── 01_eda.ipynb                # EDA локально (uv run jupyter lab, ядро из .venv, polars)

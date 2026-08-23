@@ -1,12 +1,15 @@
 import json
 import os
 import shutil
+from os import PathLike
 from pathlib import Path
+from typing import Any
 
 import mlflow
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, PreTrainedModel, PreTrainedConfig, AutoModel
+from transformers import AutoTokenizer, PreTrainedModel, PreTrainedConfig, AutoModel, AutoConfig
+from transformers.modeling_utils import SpecificPreTrainedModelType
 
 
 def product_text(name, category, attributes, attr_cap: int = 1500) -> str:
@@ -54,9 +57,27 @@ class HFCrossEncoder(PreTrainedModel):
         self.dropout = torch.nn.Dropout(getattr(config, "dropout", 0.1))
         self.clf = torch.nn.Linear(config.hidden_size, 1)
 
+        self.post_init()
+
     def forward(self, **kwargs):
         cls = self.encoder(**kwargs).last_hidden_state[:, 0, :]
         return self.clf(self.dropout(cls)).squeeze(-1)
+
+    def train_top_k_layers(self, k_layers: int = 1):
+        for layer in self.encoder.encoder.layers[:-k_layers]:
+            for parameter in layer.parameters():
+                parameter.requires_grad = False
+
+    def get_active_params(self):
+        for param in self.parameters():
+            if param.requires_grad:
+                yield param
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        if kwargs.get("config") is None:
+            kwargs["config"] = AutoConfig.from_pretrained(pretrained_model_name_or_path)
+        return super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
 
 
 def download_model_from_mlflow(run_id: str, save_path: str | Path, artifact_path: str) -> None:

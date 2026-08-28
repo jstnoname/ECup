@@ -1,18 +1,15 @@
 import json
 import os
 import shutil
-from os import PathLike
 from pathlib import Path
-from typing import Any
 
 import mlflow
 import torch
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedConfig, AutoModel, AutoConfig
-from transformers.modeling_utils import SpecificPreTrainedModelType
 
 
-def product_text(name, category, attributes, attr_cap: int = 1500) -> str:
+def product_text(name, category, attributes, attr_cap: int = 1500, total_cap: int | None = None) -> str:
     """
     Build product text like org baseline: Name: ... Category: ... Attributes: ...
     Attributes string is capped to `attr_cap` chars.
@@ -22,7 +19,7 @@ def product_text(name, category, attributes, attr_cap: int = 1500) -> str:
         attr_text = " ".join(f"{k}: {v}" for k, v in attrs.items())[:attr_cap]
     except (TypeError, json.JSONDecodeError):
         attr_text = ""
-    return f"Name: {name} Category: {category} Attributes: {attr_text}"
+    return f"Name: {name} Category: {category} Attributes: {attr_text}"[:total_cap]
 
 
 class CrossEncoder(torch.nn.Module):
@@ -63,10 +60,16 @@ class HFCrossEncoder(PreTrainedModel):
         cls = self.encoder(**kwargs).last_hidden_state[:, 0, :]
         return self.clf(self.dropout(cls)).squeeze(-1)
 
-    def train_top_k_layers(self, k_layers: int = 1):
-        for layer in self.encoder.encoder.layers[:-k_layers]:
+    def train_top_k_layers(self, encoder_layers: int | None = None, train_embeddings: bool = False):
+        for layer in self.encoder.encoder.layer[:-encoder_layers if encoder_layers else encoder_layers]:
             for parameter in layer.parameters():
                 parameter.requires_grad = False
+
+        if not train_embeddings:
+            for parameter in self.encoder.embeddings.parameters():
+                parameter.requires_grad = False
+
+        return self
 
     def get_active_params(self):
         for param in self.parameters():

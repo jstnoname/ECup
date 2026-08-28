@@ -9,12 +9,13 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.3,<3",
     "polars>=1.43.2",
-    "numpy",
     "python-dotenv>=1.2.2",
     "mlflow==3.5.1",
     "ipykernel>=7.3.0",
     "transformers>=5.15.0",
     "torch==2.11.0",
+    "peft>=0.20.0",
+    "torchao>=0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -40,19 +41,19 @@ matches = "matches.parquet"
 matches_llm = "matches_llm.parquet"
 
 [tool.ecup.model]
-student_name = "ai-forever/ruBert-base"
-teacher_name = "ai-forever/sbert_large_mt_nlu_ru"
-tokenizer_name = "ai-forever/sbert_large_mt_nlu_ru"
+student_name = "well-please/student_model"
+teacher_name = "well-please/teacher_model"
+tokenizer_name = "well-please/teacher_model"
 seed = 69
-epochs = 2
-batch_size = 16
+teacher_epochs = 2
+student_epochs = 2
+teacher_batch = 128
+student_batch = 128
+inference_batch = 512
 lr = 1e-5
-max_len = 256
+max_len = 320
 alpha = 0.5
-llm_weight = 0.2
-temperature = 1.0
 test_size = 0.2
-infer_batch_size = 512
 
 [dependency-groups]
 dev = [

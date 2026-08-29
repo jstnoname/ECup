@@ -19,9 +19,10 @@ BASE_DIR = Path("/fine-tuning").resolve()
 MODEL_DIR = BASE_DIR / "model"
 TOKENIZER_DIR = BASE_DIR / "tokenizer"
 
-MAX_LEN = 256
+MAX_LEN = 320
 BATCH_SIZE = 512
 ATTR_CAP = 1500
+TOTAL_CAP = 2000
 DEVICE = torch.device("cuda")
 DTYPE = torch.float16
 
@@ -36,13 +37,13 @@ def parse_args() -> tuple[Literal['items_path'], Literal['matches_path'], Litera
     return args.items_path, args.matches_path, args.output_path
 
 
-def product_text(name, category, attributes, attr_cap=2000) -> str:
+def product_text(name, category, attributes, attr_cap=2000, total_cap: int | None = None) -> str:
     try:
         attrs = json.loads(attributes)
         attr_text = " ".join(f"{k}: {v}" for k, v in attrs.items())[:attr_cap]
     except (TypeError, json.JSONDecodeError):
         attr_text = ""
-    return f"Name: {name} Category: {category} Attributes: {attr_text}"
+    return f"Name: {name} Category: {category} Attributes: {attr_text}"[:total_cap]
 
 
 class CrossEncoder(torch.nn.Module):
@@ -68,7 +69,7 @@ def build_pairs(items_path: str, matches_path: str) -> pl.DataFrame:
         .select(
             "id",
             pl.struct(["name", "category", "attributes"]).map_elements(
-                lambda r: product_text(r["name"], r["category"], r["attributes"], attr_cap=ATTR_CAP),
+                lambda r: product_text(r["name"], r["category"], r["attributes"], attr_cap=ATTR_CAP, total_cap=TOTAL_CAP),
                 return_dtype=pl.String
             ).alias("text"),
         ).collect()

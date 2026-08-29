@@ -1,0 +1,4 @@
+{
+  "image": "jstnoname/bigger-model:v1",
+  "entry_point": "python -u run.py"
+}

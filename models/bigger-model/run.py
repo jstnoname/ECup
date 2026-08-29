@@ -14,12 +14,13 @@ from pathlib import Path
 import polars as pl
 import torch
 from transformers import AutoConfig, AutoModel, AutoTokenizer
+from torchao.quantization import quantize_, Float8WeightOnlyConfig
 
 BASE_DIR = Path("/bigger-model").resolve()
 MODEL_DIR = BASE_DIR / "model"
 TOKENIZER_DIR = BASE_DIR / "tokenizer"
 
-MAX_LEN = 320
+MAX_LEN = 224
 BATCH_SIZE = 512
 ATTR_CAP = 1500
 TOTAL_CAP = 2000
@@ -93,6 +94,7 @@ def load_model():
     state = torch.load(MODEL_DIR / "model.pt", map_location=DEVICE)
     model.load_state_dict(state)
     model.eval()
+    quantize_(model, Float8WeightOnlyConfig())
     print(f"model loaded on {DEVICE} ({DTYPE})")
     return model
 
@@ -113,8 +115,7 @@ def predict(model, tokenizer, text1: list[str], text2: list[str]) -> list[float]
                 truncation=True,
                 max_length=MAX_LEN,
                 return_tensors="pt",
-            )
-            inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+            ).to(device=DEVICE)
             probs = model(**inputs).float().sigmoid().cpu().tolist()
             for pos, i in enumerate(idx):
                 scores[i] = probs[pos]

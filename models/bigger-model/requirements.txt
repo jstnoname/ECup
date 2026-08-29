@@ -2,3 +2,4 @@
 torch==2.11.0+cu128
 transformers==5.15.0
 polars==1.43.2
+torchao==0.18.0

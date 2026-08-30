@@ -46,19 +46,25 @@ class CrossEncoder(torch.nn.Module):
 
 class HFCrossEncoder(PreTrainedModel):
     _supports_sdpa = True
+    supports_gradient_checkpointing = True
 
-    def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
+    def __init__(self, config: PreTrainedConfig, *inputs, compute_loss: bool = False, **kwargs):
         super().__init__(config, *inputs, **kwargs)
 
         self.encoder = AutoModel.from_config(config)
         self.dropout = torch.nn.Dropout(getattr(config, "dropout", 0.1))
         self.clf = torch.nn.Linear(config.hidden_size, 1)
+        self.compute_loss = compute_loss
 
         self.post_init()
 
-    def forward(self, **kwargs):
-        cls = self.encoder(**kwargs).last_hidden_state[:, 0, :]
-        return self.clf(self.dropout(cls)).squeeze(-1)
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
+        cls = self.encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs).last_hidden_state[:, 0, :]
+        logits = self.clf(self.dropout(cls)).squeeze(-1)
+        if self.compute_loss and labels is not None:
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels)
+            return {'loss': loss, 'logits': logits}
+        return logits
 
     def train_top_k_layers(self, encoder_layers: int | None = None, train_embeddings: bool = False):
         for layer in self.encoder.encoder.layer[:-encoder_layers if encoder_layers else encoder_layers]:

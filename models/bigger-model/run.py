@@ -91,7 +91,7 @@ def build_pairs(items_path: str, matches_path: str) -> pl.DataFrame:
 def load_model():
     config = AutoConfig.from_pretrained(MODEL_DIR)
     model = CrossEncoder(AutoModel.from_config(config)).to(device=DEVICE, dtype=DTYPE)
-    state = torch.load(MODEL_DIR / "model.pt", map_location=DEVICE)
+    state = torch.load(MODEL_DIR / "model.pt", map_location=DEVICE, weights_only=True)
     model.load_state_dict(state)
     model.eval()
     quantize_(model, Float8WeightOnlyConfig())

@@ -50,10 +50,25 @@ student_epochs = 2
 teacher_batch = 128
 student_batch = 224
 inference_batch = 512
-lr = 1e-5
-max_len = 320
 alpha = 0.5
+
+# Fine-tuning (student v8)
+model_name = "well-please/student_model"
+model_lora_r = 64
+model_lora_alpha = 128
+model_lora_dropout = 0.05
+model_lora_layers = "5-12"
+model_lora_modules = "clf,query,key,value,dense"
+train_batch = 128
+eval_batch = 256
+train_epochs = 2
+lr = 5e-4
+max_len = 320
 test_size = 0.2
+symmetry_prob = 0.3
+llm_sample_size = 200000
+label_smoothing = 0.05
+llm_fill_weight = 0.5
 
 [dependency-groups]
 dev = [

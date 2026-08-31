@@ -38,7 +38,7 @@
 - Стабильность: обучение в чистом fp16 даёт NaN → fp32 master weights + `autocast(fp16)` + `GradScaler` + clip 10.0.
 - Артефакты: child-runs `teacher training` / `student distill` → `teacher_model/`, `student_model/` (MLmodel-формат, веса в `data/model.pth`, уже в fp16 после `.half()`).
 
-## Результаты fine-tuning (`notebooks/04_fine_tuning_2.ipynb`)
+## Результаты fine-tuning v7 (`notebooks/04_fine_tuning_2.ipynb`)
 
 Прогон 2026-08 (Kaggle/Colab), MLflow experiment `ecup-student-fine-tuning` (Dagshub). Парадигма сменена с дистилляции на **прямое LoRA-дообучение** студента на human-разметке: классический KD не даёт выигрыша при скалярной голове (нет распределений по классам), а калибровка под целевую метрику на 365K human-парах важнее.
 
@@ -48,6 +48,16 @@
 - **Гиперпараметры**: `student_epochs=2, lr=1e-5, max_len=320, student_batch=224, seed=69`; fp32 master + `autocast(fp16)` + `GradScaler` + clip 10.0.
 - **Платформенный скор**: **Public Mean PR-AUC = 0.3999233091** (сабмит v7, `models/fine-tuning`). Для сравнения: дистилляция v6 Check 0.3114 (+0.0886); офлайн human macro PR-AUC дистилляции = 0.5117 (зазор — шум малой выборки Check/Public и сдвиг распределения теста).
 - Артефакты: `student.merge_and_unload().push_to_hub('well-please/student_model', private=True)`; MLflow `transformers.log_model`.
+
+## Результаты LoRA + LLM-аугментация v8 (`notebooks/05_rubert_peft_and_aug.ipynb`)
+
+Последняя попытка, Kaggle 2×T4, MLflow experiment `rubert-peft-and-aug` (Dagshub). Конкурс закрылся до завершения обучения — сабмит не отправлен.
+
+- **Парадигма**: LoRA r=64, alpha=128, lora_dropout=0.05, `target_modules=['query','key','value','dense','clf']`, `layers_to_transform=range(5,12)` (7 слоёв энкодера + классификатор). Учитель в лоссе не используется — supervised BCE + label smoothing на комбинированных данных.
+- **Данные**: human train 229K + LLM 200K бинарных пар (target ≥0.75→1, ≤0.25→0, фильтрация до join с items для экономии RAM) + симметрия ~50% → итого ~640K пар. Length-bucketing по суммарной длине текстов.
+- **Гиперпараметры**: `train_epochs=2, lr=1e-5, max_len=320, train_batch=256, eval_batch=256, seed=69`; fp32 master + `autocast(fp16)` + `GradScaler` + clip 10.0; label_smoothing=0.1, symmetry_prob=0.5.
+- **Результат**: checkpoint-4364 (1 эпоха), loss 0.52→0.38, кривая продолжает убывать — модель не дообучилась. 2-я эпоха могла бы дать прирост к Public score.
+- Артефакты: checkpoint PEFT (adapter_model.safetensors), merge → `model.pt` (state_dict, 340MB) + `config.json` в `models/peft-and-aug/model/`.
 
 ## Архитектура
 
@@ -67,7 +77,8 @@ ECup/
 │   ├── 01_eda.ipynb                   # EDA локально (JupyterLab, polars)
 │   ├── 02_baseline_eval.ipynb         # оценка baseline организаторов на human-данных
 │   ├── 03_model_distillation.ipynb    # дистилляция teacher→student (Colab/Kaggle), артефакты → MLflow
-│   └── 04_fine_tuning_2.ipynb         # LoRA fine-tune студента на human-парах (Kaggle/Colab)
+│   ├── 04_fine_tuning_2.ipynb         # LoRA fine-tune v7 студента на human-парах (Kaggle/Colab)
+│   └── 05_rubert_peft_and_aug.ipynb   # LoRA r64 + LLM 200K + симметрия + label smoothing (v8, Kaggle)
 └── models/
     ├── baseline/       # историческое сабмит-решение v6 (дистилляция, пути /baseline)
     │   ├── run.py          # entry point инференса: --items_path --matches_path --output_path;
@@ -77,43 +88,35 @@ ECup/
     │   ├── metadata.json   # {"image": "...:v6", "entry_point": "python -u run.py"} — копия едет в корне архива
     │   ├── model/          # student_state.pt fp16 (~340MB) + config.json (в образе и в архиве)
     │   └── tokenizer/      # токенизатор sbert_large_mt_nlu_ru (в образе и в архиве)
-    └── fine-tuning/    # активное сабмит-решение v7 (LoRA fine-tune, пути /fine-tuning)
+    ├── fine-tuning/    # сабмит-решение v7 (LoRA fine-tune, пути /fine-tuning)
+    │   ├── run.py          # entry point: --items_path/--matches_path/--output_path
+    │   │                   #   → csv id1,id2,predict; cuda-only fp16, пути /fine-tuning/*, bucketing по длине
+    │   ├── Dockerfile      # python:3.12.13-slim, WORKDIR /fine-tuning, БЕЗ ENTRYPOINT
+    │   ├── requirements.txt # torch==2.11.0+cu128, transformers==5.15.0, polars==1.43.2
+    │   ├── metadata.json   # {"image": "...:v7", "entry_point": "python -u run.py"}
+    │   ├── model/          # model.pt fp16 (~340MB) + config.json
+    │   └── tokenizer/      # токенизатор (в образе и в архиве)
+    └── peft-and-aug/   # финальная попытка v8 (LoRA r64 + LLM аугментация, пути /peft-model)
         ├── run.py          # entry point: --items_path/--matches_path/--output_path
-        │                   #   → csv id1,id2,predict; cuda-only fp16, пути /fine-tuning/*, bucketing по длине
-        ├── Dockerfile      # python:3.12.13-slim, WORKDIR /fine-tuning, БЕЗ ENTRYPOINT
+        │                   #   → csv id1,id2,predict; cuda-only fp16, MAX_LEN=320, bucketing по длине
+        ├── Dockerfile      # python:3.12.13-slim, WORKDIR /peft-model, БЕЗ ENTRYPOINT
         ├── requirements.txt # torch==2.11.0+cu128, transformers==5.15.0, polars==1.43.2
-        ├── metadata.json   # {"image": "...:v7", "entry_point": "python -u run.py"}
-        ├── model/          # model.pt fp16 (~340MB) + config.json
-        └── tokenizer/      # токенизатор (в образе и в архиве)
+        ├── metadata.json   # {"image": "jstnoname/peft-model:v1", "entry_point": "python -u run.py"}
+        ├── model/          # model.pt fp16 (~340MB, merged LoRA) + config.json
+        └── tokenizer/      # токенизатор
 ```
 
-Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа из MLflow-артефакта (Dagshub). `metadata.json` (`{"image": ..., "entry_point": "python -u run.py"}`) лежит в `models/baseline/` (исторический v6) или `models/fine-tuning/` (активный v7) и пакуется в zip-архив сабмита вместе с `run.py` и весами.
+Ключевая идея: **обучение и валидация — только удалённо** (Kaggle, Colab); локальная машина — для EDA, вёрстки кода и сборки Docker-образа. `metadata.json` (`{"image": ..., "entry_point": "python -u run.py"}`) лежит в соответствующей папке `models/` и пакуется в zip-архив сабмита вместе с `run.py` и весами.
 
-## Обучение (Kaggle / Colab)
+## Сабмит (конкурс завершён)
 
-Ноутбук `notebooks/03_model_distillation.ipynb` — оркестрация дистилляции; `notebooks/04_fine_tuning_2.ipynb` — LoRA fine-tune (активный пайплайн):
+### Итоговые результаты
 
-1. `%pip install -e .[train]` — установка из pyproject (на платформах нет uv, только pip). Включает `peft` и `torchao` (для LoRA).
-2. Конфиг читается из `[tool.ecup.data]` / `[tool.ecup.model]` в `pyproject.toml` (`tomllib`), при желании переопределяется в ячейке; целиком логируется в MLflow.
-3. Секреты (MLflow/Dagshub, HF) — через секреты платформ (`kaggle_secrets` / `userdata`), не в ячейках.
-4. Данные — чтение напрямую с HF нативным polars (`hf://`): в первой ячейке `env = utility.load()` (секреты → environ, конфиг, каталог данных), дальше `pl.read_parquet(f"hf://datasets/{env.config.data.data_repo}/{file}.parquet")`.
-5. Обучение → модель логируется в MLflow (Dagshub) через `save_model` + `log_artifacts` (`log_model` на Dagshub падает 400 — см. AGENTS Gotchas) → артефакт используется для Docker-сборки.
-
-## Сабмит
-
-### Активный пайплайн (v7, `models/fine-tuning`)
-
-1. Веса: модель обучается в ноутбуке 04 → `push_to_hub('well-please/student_model', private)`. Экспорт: `download_model_from_mlflow` → `models/fine-tuning/model/model.pt` + `config.json`; токенизатор: `download_tokenizer_from_hf("ai-forever/sbert_large_mt_nlu_ru", ...)` → `models/fine-tuning/tokenizer/`.
-2. `docker build -t jstnoname/distill_model_solution:v7 models/fine-tuning` — torch ставится строго `+cu128`: драйверы стенда держат максимум CUDA 12.8, дефолтный PyPI-wheel падает с «NVIDIA driver too old».
-3. GPU-free проверка сборки: `docker run --rm jstnoname/distill_model_solution:v7 python -c "import torch; print(torch.__version__, torch.version.cuda)"` → ожидание `2.11.0+cu128 12.8`.
-4. `docker push jstnoname/distill_model_solution:v7`. Теги версионные; уже запушенные не мутировать.
-5. Архив (`models/fine-tuning/` → zip): `metadata.json` (v7) + `run.py` + `model/` + `tokenizer/`. Чекер распаковывает архив и запускает `entry_point` оттуда.
-6. Статус: **Public Mean PR-AUC = 0.3999233091** (v7).
-
-### Исторический пайплайн (v6, `models/baseline`)
-
-1. `docker build -t jstnoname/distill_model_solution:v6 models/baseline`.
-2. Статус: **Check Success, Mean PR-AUC 0.3114** (2026-08-22, дистилляция v6).
+| Решение | Пайплайн | Описание | Скор |
+|---------|----------|----------|------|
+| v6 | `models/baseline` | Дистилляция teacher→student (MS-Marco-MiniLM + ruBert-base) | Check 0.3114 |
+| v7 | `models/fine-tuning` | LoRA r=16 на human-разметке (365K пар) | **Public 0.3999** (лучший отправленный) |
+| v8 | `models/peft-and-aug` | LoRA r=64 + LLM 200K + симметрия + label smoothing | Не отправлен (конкурс закрылся) |
 
 ## Для агентов
 
